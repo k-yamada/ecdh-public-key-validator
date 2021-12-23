@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <title>ECDH鍵共有実験 - Web Crypto API</title>
+  <script type="module">
+    const ECDH = {};
+
+    const NAMED_CURVE = "P-256";
+
+    ECDH.generateKeyPair = async () => {
+      const canexport = true;
+      return await window.crypto.subtle.generateKey(
+        { name: "ECDH", namedCurve: NAMED_CURVE },
+        canexport,
+        ["deriveKey"]
+      );
+    };
+
+    ECDH.getPublicKey = async (keypair) => {
+      const exported = await window.crypto.subtle.exportKey("raw", keypair.publicKey);
+      return new Uint8Array(exported);
+    };
+
+    ECDH.getPrivateKey = async (keypair) => {
+      return await window.crypto.subtle.exportKey("jwk", keypair.privateKey);
+    };
+
+    ECDH.importKeyPair = async (pubkey, prikey) => {
+      const canexport = false;
+      try {
+        const publicKey = await window.crypto.subtle.importKey(
+          "raw",
+          pubkey,
+          { name: "ECDH", namedCurve: NAMED_CURVE },
+          canexport,
+          []
+        );
+        const privateKey = await window.crypto.subtle.importKey(
+          "jwk",
+          prikey,
+          { name: "ECDH", namedCurve: NAMED_CURVE },
+          canexport,
+          ["deriveKey"]
+        );
+        return { publicKey, privateKey };
+      } catch (e) {
+        console.log(e);
+        return null;
+      }
+    };
+
+    ECDH.deriveSecretKey = async (keypair, publicKey) => {
+      const canexport = true;
+      const importedKey = await window.crypto.subtle.importKey(
+        "raw",
+        publicKey,
+        { name: "ECDH", namedCurve: NAMED_CURVE },
+        canexport,
+        []
+      );
+
+      return await window.crypto.subtle.deriveKey(
+        { name: "ECDH", public: importedKey },
+        keypair.privateKey,
+        { name: "AES-GCM", length: 256 },
+        canexport,
+        ["encrypt", "decrypt"]
+      );
+    };
+
+    ECDH.exportSecretKey = async (key) => {
+      const exported = await window.crypto.subtle.exportKey("raw", key);
+      return new Uint8Array(exported);
+    };
+
+    ECDH.importSecretKey = async (key) => {
+      const canexport = true;
+      return await window.crypto.subtle.importKey(
+        "raw",
+        key,
+        { name: "AES-GCM", length: 256 },
+        canexport,
+        ["encrypt", "decrypt"]
+      );
+    };
+
+    ECDH.encrypt = async (secretKey, plaintext) => {
+      const iv = window.crypto.getRandomValues(new Uint8Array(12));
+      const ciphertextabuf = await window.crypto.subtle.encrypt({ name: "AES-GCM", iv }, secretKey, plaintext);
+      const ciphertext = new Uint8Array(ciphertextabuf);
+      return { iv, ciphertext };
+    };
+
+    ECDH.encryptText = async (secretKey, plaintexts) => {
+      return await ECDH.encrypt(secretKey, new TextEncoder().encode(plaintexts));
+    };
+
+    ECDH.decrypt = async (secretKey, iv, ciphertext) => {
+      const decrypted = await window.crypto.subtle.decrypt({ name: "AES-GCM", iv }, secretKey, ciphertext);
+      return decrypted;
+    };
+
+    ECDH.decryptText = async (secretKey, iv, ciphertext) => {
+      try {
+        return new TextDecoder().decode(await ECDH.decrypt(secretKey, iv, ciphertext));
+      } catch (e) {
+        return "error!! " + e;
+      }
+    };
+
+
+    import { hex } from "https://code4sabae.github.io/js/hex.js";
+
+    window.onload = () => {
+      let keypair = null;
+      let secretkey = null;
+      const assert = (chk, mes) => {
+        if (!chk) {
+          alert(mes);
+          throw new Error();
+        }
+      };
+      generatebutton.onclick = async () => {
+        keypair = await ECDH.generateKeyPair();
+        ecdhpublickey.value = hex.fromBin(await ECDH.getPublicKey(keypair));
+        ecdhprivatekey.value = JSON.stringify(await ECDH.getPrivateKey(keypair));
+      };
+      generatebutton2.onclick = async () => {
+        assert(keypair, "先に、公開鍵を生成してください");
+        secretkey = await ECDH.deriveSecretKey(keypair, hex.toBin(ecdhpublickey2.value));
+        ecdhsecretkey.value = hex.fromBin(await ECDH.exportSecretKey(secretkey));
+      };
+      encryptbutton.onclick = async () => {
+        assert(secretkey, "先に、共通鍵を生成してください");
+        const ciphered = await ECDH.encryptText(secretkey, ecdhmessage.value);
+        console.log(ciphered);
+        ecdhciphertext.value = hex.fromBin(ciphered.ciphertext);
+        ecdhiv.value = hex.fromBin(ciphered.iv);
+      };
+      decryptbutton.onclick = async () => {
+        assert(secretkey, "先に、共通鍵を生成してください");
+        const ciphertext = hex.toBin(ecdhciphertext.value);
+        const iv = hex.toBin(ecdhiv.value);
+        try {
+          const plaintext = await ECDH.decryptText(secretkey, iv, ciphertext);
+          ecdhplaintext.value = plaintext;
+        } catch (e) {
+          ecdhplaintext.value = "error!! " + e;
+        }
+      };
+    };
+  </script>
+  <style>
+    body {
+      font-family: sans-serif;
+    }
+
+    input[type="text"] {
+      width: 80vw;
+    }
+  </style>
+</head>
+
+<body>
+  <main>
+    <h1>ECDH鍵共有実験</h1>
+    <section>
+      <input id="generatebutton" type="button" value="1. 公開鍵生成"><br>
+      <br>
+      秘密鍵（誰にも渡さない）<br>
+      <input type="text" id="ecdhprivatekey"><br>
+      公開鍵（相手に渡す）<br>
+      <input type="text" id="ecdhpublickey"><br>
+      相手の公開鍵（通信する相手からもらう、テストは自分の公開鍵でもOK）<br>
+      <input type="text" id="ecdhpublickey2"><br>
+      <br>
+      <input id="generatebutton2" type="button" value="2. 共通鍵生成"><br>
+      <br>
+      生成した共通鍵（ネットワークには流れないけど、相手と同じ共通鍵です！）<br>
+      <input type="text" id="ecdhsecretkey"><br>
+      メッセージ（何か書いてください）<br>
+      <input type="text" id="ecdhmessage" value=""><br>
+      <br>
+      <input id="encryptbutton" type="button" value="3. 暗号化"><br>
+      <br>
+      初期化ベクトル(IV)<br>
+      <input type="text" id="ecdhiv"><br>
+      暗号化されたメッセージ（相手に渡す or 渡されたものを書く）<br>
+      <input type="text" id="ecdhciphertext"><br>
+      <br>
+      <input id="decryptbutton" type="button" value="4. 復号化"">
+          <br>
+          復号化されたメッセージ<br>
+          <input type=" text" id="ecdhplaintext"><br>
+    </section>
+    <hr>
+    <div id="credit">
+      App: CC BY <a href=https://fukuno.jig.jp/3009>福野泰介の一日一創</a><br>
+      Algorithm: ECDH P-256, AES-256-GCM<br>
+      API: <a href=https://developer.mozilla.org/ja/docs/Web/API/Web_Crypto_API>Web Crypto API</a><br>
+      Reference: <a
+        href=https://github.com/mdn/dom-examples/tree/master/web-crypto/derive-key>dom-examples/web-crypto/derive-key at
+        master · mdn/dom-examples</a><br>
+    </div>
+  </main>
+</body>
+
+</html>
